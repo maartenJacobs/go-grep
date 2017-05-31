@@ -20,10 +20,14 @@ type automata struct {
 }
 
 func (m *automata) getTransitions(st *state, c rune) []*state {
-	if nextStates, hasNext := m.transitions[st][c]; hasNext {
-		return nextStates
+	var trans []*state
+	if c == empty {
+		trans = append(trans, st)
 	}
-	return make([]*state, 0)
+	if nextStates, hasNext := m.transitions[st][c]; hasNext {
+		trans = append(trans, nextStates...)
+	}
+	return trans
 }
 
 type matcher struct {
@@ -82,6 +86,7 @@ func matchAutomata(m automata, in string) bool {
 		matcher.move(c)
 	}
 
+	fmt.Println(matcher.oldStates)
 	for _, cstate := range matcher.oldStates {
 		if matcher.automata.accepting == cstate {
 			return true
@@ -131,7 +136,7 @@ type match struct {
 	c rune
 }
 
-func (match *match) convert() automata {
+func (match match) convert() automata {
 	state0 := newState()
 	state1 := newState()
 
@@ -151,7 +156,7 @@ type concat struct {
 	exprs []expr
 }
 
-func (concat *concat) convert() automata {
+func (concat concat) convert() automata {
 	if len(concat.exprs) == 0 {
 		panic("Concat expression has no subexpressions")
 	}
@@ -164,26 +169,48 @@ func (concat *concat) convert() automata {
 	return automata
 }
 
+func concatAutomata(a, b automata) automata {
+	a.transitions = mergeTransitions(a.transitions, b.transitions)
+	a.transitions[a.accepting] = a.transitions[b.initial]
+	delete(a.transitions, b.initial)
+	a.accepting = b.accepting
+	return a
+}
+
 // Match on possibility of 2 expressions
 type union struct {
 	expr1 *expr // Must not be nil
 	expr2 *expr // May be nil, but must be filled in later
 }
 
-func (union *union) convert() automata {
+func (union union) convert() automata {
 	newInitial := newState()
 	newAccepting := newState()
 
-	expr1Automata := union.expr1.convert()
-	expr2automata := union.expr2.convert()
-	transitions := expr1Automata.transitions
-	for k, v := range expr2Automata.transitions {
-		transitions[k] = v
+	expr1Automata := (*union.expr1).convert()
+	expr2automata := (*union.expr2).convert()
+	transitions := mergeTransitions(expr1Automata.transitions, expr2automata.transitions)
+	transitions[newInitial] = map[rune][]*state{
+		empty: []*state{expr1Automata.initial, expr2automata.initial},
 	}
+	transitions[expr1Automata.accepting] = map[rune][]*state{
+		empty: []*state{newAccepting},
+	}
+	transitions[expr2automata.accepting] = map[rune][]*state{
+		empty: []*state{newAccepting},
+	}
+
+	return automata{
+		initial:     newInitial,
+		accepting:   newAccepting,
+		transitions: transitions}
 }
 
-func mergeTransitions(a, b map[*state]) {
-
+func mergeTransitions(a, b map[*state]map[rune][]*state) map[*state]map[rune][]*state {
+	for state, transitions := range b {
+		a[state] = transitions
+	}
+	return a
 }
 
 // Match on 0 or more occurrences of one expression
@@ -191,19 +218,45 @@ type kleene struct {
 	expr expr
 }
 
-func concatAutomata(a, b automata) automata {
+func (kleene *kleene) convert() automata {
+	newInitial := newState()
+	newAccepting := newState()
+	subAutomata := kleene.expr.convert()
+	transitions := subAutomata.transitions
+	transitions[newInitial] = map[rune][]*state{
+		empty: []*state{subAutomata.initial, newAccepting},
+	}
+	transitions[subAutomata.accepting] = map[rune][]*state{
+		empty: []*state{newAccepting},
+	}
 
+	return automata{
+		initial:     newInitial,
+		accepting:   newAccepting,
+		transitions: transitions}
 }
 
 func compile(reg string) automata {
-
+	var matchers []expr
+	for _, c := range reg {
+		matchers = append(matchers, match{c: c})
+	}
+	return (concat{exprs: matchers}).convert()
 }
 
 func main() {
-	m := buildStateMachine()
-	fmt.Println("abb match:", matchAutomata(m, "abb"))
-	fmt.Println("aabb match:", matchAutomata(m, "aabb"))
-	fmt.Println("babb match:", matchAutomata(m, "babb"))
-	fmt.Println("ab match:", matchAutomata(m, "ab"))
-	fmt.Println("a match:", matchAutomata(m, "a"))
+	// m := buildStateMachine()
+	// fmt.Println("abb match:", matchAutomata(m, "abb"))
+	// fmt.Println("aabb match:", matchAutomata(m, "aabb"))
+	// fmt.Println("babb match:", matchAutomata(m, "babb"))
+	// fmt.Println("ab match:", matchAutomata(m, "ab"))
+	// fmt.Println("a match:", matchAutomata(m, "a"))
+
+	abcAutomata := compile("abc")
+	fmt.Println("abc match:", matchAutomata(abcAutomata, "abc"))
+	fmt.Println("a match:", matchAutomata(abcAutomata, "a"))
+	fmt.Println("b match:", matchAutomata(abcAutomata, "b"))
+	fmt.Println("c match:", matchAutomata(abcAutomata, "c"))
+	fmt.Println("ac match:", matchAutomata(abcAutomata, "ac"))
+	fmt.Println("ab match:", matchAutomata(abcAutomata, "ab"))
 }
