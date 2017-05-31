@@ -8,8 +8,9 @@ const empty rune = 0
 
 type state uint8
 
-func newState() (state *state) {
-	return
+func newState() *state {
+	state := state(0)
+	return &state
 }
 
 type automata struct {
@@ -26,68 +27,63 @@ func (m *automata) getTransitions(st *state, c rune) []*state {
 }
 
 type matcher struct {
-	m         automata
-	oldStates []int
-	newStates []int
-	alreadyOn []bool
+	automata  automata
+	oldStates []*state
+	newStates []*state
+	alreadyOn map[*state]bool
 }
 
-func newMatcher(m automata) matcher {
+func newMatcher(automata automata) matcher {
 	matcher := matcher{
-		m:         m,
-		alreadyOn: make([]bool, len(m.states)),
+		automata:  automata,
+		alreadyOn: make(map[*state]bool),
 	}
 
-	matcher.oldStates = append(matcher.oldStates, 0)
+	// Initialise alreadyOn. No state should be currently on the "new" states stack.
+	for state := range matcher.automata.transitions {
+		matcher.alreadyOn[state] = false
+	}
+
+	matcher.oldStates = append(matcher.oldStates, matcher.automata.initial)
 	matcher.move(empty)
 	return matcher
 }
 
-func (m *matcher) addState(state int) {
-	m.newStates = append(m.newStates, state)
-	m.alreadyOn[state] = true
-	for _, nextState := range m.m.getTransitions(state, empty) {
-		if !m.alreadyOn[nextState] {
-			m.addState(nextState)
+func (matcher *matcher) addState(state *state) {
+	matcher.newStates = append(matcher.newStates, state)
+	matcher.alreadyOn[state] = true
+	for _, nextState := range matcher.automata.getTransitions(state, empty) {
+		if !matcher.alreadyOn[nextState] {
+			matcher.addState(nextState)
 		}
 	}
 }
 
-func (m *matcher) move(c rune) {
-	for _, oldState := range m.oldStates {
-		for _, nextState := range m.m.getTransitions(oldState, c) {
-			if !m.alreadyOn[nextState] {
-				m.addState(nextState)
+func (matcher *matcher) move(c rune) {
+	for _, oldState := range matcher.oldStates {
+		for _, nextState := range matcher.automata.getTransitions(oldState, c) {
+			if !matcher.alreadyOn[nextState] {
+				matcher.addState(nextState)
 			}
 		}
 	}
 
 	// Transfer new states to old states.
-	m.oldStates = m.newStates
-	for _, newState := range m.newStates {
-		m.alreadyOn[newState] = false
+	matcher.oldStates = matcher.newStates
+	for _, newState := range matcher.newStates {
+		matcher.alreadyOn[newState] = false
 	}
-	m.newStates = make([]int, 0)
+	matcher.newStates = make([]*state, 0)
 }
 
-func main() {
-	m := buildStateMachine()
-	fmt.Println("abb match:", match(m, "abb"))
-	fmt.Println("aabb match:", match(m, "aabb"))
-	fmt.Println("babb match:", match(m, "babb"))
-	fmt.Println("ab match:", match(m, "ab"))
-	fmt.Println("a match:", match(m, "a"))
-}
-
-func match(m automata, in string) bool {
+func matchAutomata(m automata, in string) bool {
 	matcher := newMatcher(m)
 	for _, c := range in {
 		matcher.move(c)
 	}
 
-	fmt.Println(matcher.oldStates)
 	for _, cstate := range matcher.oldStates {
-		if matcher.m.states[cstate].accepting {
+		if matcher.automata.accepting == cstate {
 			return true
 		}
 	}
@@ -126,6 +122,88 @@ func buildStateMachine() automata {
 		transitions: transitions}
 }
 
-// func compile(reg string) stateMachine {
+type expr interface {
+	convert() automata
+}
 
-// }
+// Match on a single character
+type match struct {
+	c rune
+}
+
+func (match *match) convert() automata {
+	state0 := newState()
+	state1 := newState()
+
+	transitions := map[*state]map[rune][]*state{
+		state0: map[rune][]*state{match.c: []*state{state1}},
+		state1: map[rune][]*state{},
+	}
+
+	return automata{
+		initial:     state0,
+		accepting:   state1,
+		transitions: transitions}
+}
+
+// Match on concatenation of multiple expressions in order
+type concat struct {
+	exprs []expr
+}
+
+func (concat *concat) convert() automata {
+	if len(concat.exprs) == 0 {
+		panic("Concat expression has no subexpressions")
+	}
+
+	exprs := concat.exprs
+	automata := exprs[0].convert()
+	for _, expr := range exprs[1:] {
+		automata = concatAutomata(automata, expr.convert())
+	}
+	return automata
+}
+
+// Match on possibility of 2 expressions
+type union struct {
+	expr1 *expr // Must not be nil
+	expr2 *expr // May be nil, but must be filled in later
+}
+
+func (union *union) convert() automata {
+	newInitial := newState()
+	newAccepting := newState()
+
+	expr1Automata := union.expr1.convert()
+	expr2automata := union.expr2.convert()
+	transitions := expr1Automata.transitions
+	for k, v := range expr2Automata.transitions {
+		transitions[k] = v
+	}
+}
+
+func mergeTransitions(a, b map[*state]) {
+
+}
+
+// Match on 0 or more occurrences of one expression
+type kleene struct {
+	expr expr
+}
+
+func concatAutomata(a, b automata) automata {
+
+}
+
+func compile(reg string) automata {
+
+}
+
+func main() {
+	m := buildStateMachine()
+	fmt.Println("abb match:", matchAutomata(m, "abb"))
+	fmt.Println("aabb match:", matchAutomata(m, "aabb"))
+	fmt.Println("babb match:", matchAutomata(m, "babb"))
+	fmt.Println("ab match:", matchAutomata(m, "ab"))
+	fmt.Println("a match:", matchAutomata(m, "a"))
+}
