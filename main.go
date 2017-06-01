@@ -1,7 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"sort"
+	"strings"
+	"unsafe"
 )
 
 const empty rune = 0
@@ -86,7 +90,6 @@ func matchAutomata(m automata, in string) bool {
 		matcher.move(c)
 	}
 
-	fmt.Println(matcher.oldStates)
 	for _, cstate := range matcher.oldStates {
 		if matcher.automata.accepting == cstate {
 			return true
@@ -218,7 +221,7 @@ type kleene struct {
 	expr expr
 }
 
-func (kleene *kleene) convert() automata {
+func (kleene kleene) convert() automata {
 	newInitial := newState()
 	newAccepting := newState()
 	subAutomata := kleene.expr.convert()
@@ -236,27 +239,95 @@ func (kleene *kleene) convert() automata {
 		transitions: transitions}
 }
 
-func compile(reg string) automata {
-	var matchers []expr
+// ( ( ) )
+// ()*
+// a*
+// (a|b)
+
+func compile(reg string) (*automata, error) {
+	var exprs []expr
 	for _, c := range reg {
-		matchers = append(matchers, match{c: c})
+		var next expr
+		switch c {
+		case '*':
+			if len(exprs) == 0 {
+				return nil, errors.New("Invalid regular expression: expected expression before '*'")
+			}
+			next, exprs = exprs[len(exprs)-1], exprs[:len(exprs)-1]
+			next = kleene{expr: next}
+		default:
+			next = match{c: c}
+		}
+		exprs = append(exprs, next)
 	}
-	return (concat{exprs: matchers}).convert()
+	automata := (concat{exprs: exprs}).convert()
+	return &automata, nil
+}
+
+func printAutomata(automata *automata) {
+	numToStateMap := make(map[int]*state)
+	stateToNumMap := make(map[*state]int)
+	for state := range automata.transitions {
+		stateToNumMap[state] = int(uintptr(unsafe.Pointer(state)))
+		numToStateMap[stateToNumMap[state]] = state
+	}
+
+	sortedNums := make([]int, len(numToStateMap))
+	i := 0
+	for num := range numToStateMap {
+		sortedNums[i] = num
+		i++
+	}
+	sort.Ints(sortedNums)
+
+	stateToStandardNumMap := make(map[*state]int)
+	for standard, num := range sortedNums {
+		stateToStandardNumMap[numToStateMap[num]] = standard
+	}
+
+	fmt.Println("initial:", stateToStandardNumMap[automata.initial])
+	fmt.Println("accepting:", stateToStandardNumMap[automata.accepting])
+	fmt.Println("transitions:")
+	for state, transitions := range automata.transitions {
+		for c, states := range transitions {
+			printableStates := make([]string, len(states))
+			stateCounter := 0
+			for _, nextState := range states {
+				printableStates[stateCounter] = fmt.Sprintf("%d", stateToStandardNumMap[nextState])
+				stateCounter++
+			}
+			fmt.Printf("%d on '%c' to %s\n", stateToStandardNumMap[state], c, strings.Join(printableStates, ", "))
+		}
+	}
 }
 
 func main() {
-	// m := buildStateMachine()
-	// fmt.Println("abb match:", matchAutomata(m, "abb"))
-	// fmt.Println("aabb match:", matchAutomata(m, "aabb"))
-	// fmt.Println("babb match:", matchAutomata(m, "babb"))
-	// fmt.Println("ab match:", matchAutomata(m, "ab"))
-	// fmt.Println("a match:", matchAutomata(m, "a"))
+	if abcAutomata, err := compile("abc"); err != nil {
+		fmt.Println(err)
+	} else {
+		fmt.Println("abc match:", matchAutomata(*abcAutomata, "abc"))
+		fmt.Println("a match:", matchAutomata(*abcAutomata, "a"))
+		fmt.Println("b match:", matchAutomata(*abcAutomata, "b"))
+		fmt.Println("c match:", matchAutomata(*abcAutomata, "c"))
+		fmt.Println("ac match:", matchAutomata(*abcAutomata, "ac"))
+		fmt.Println("ab match:", matchAutomata(*abcAutomata, "ab"))
+		fmt.Println("abcd match:", matchAutomata(*abcAutomata, "abcd"))
+	}
 
-	abcAutomata := compile("abc")
-	fmt.Println("abc match:", matchAutomata(abcAutomata, "abc"))
-	fmt.Println("a match:", matchAutomata(abcAutomata, "a"))
-	fmt.Println("b match:", matchAutomata(abcAutomata, "b"))
-	fmt.Println("c match:", matchAutomata(abcAutomata, "c"))
-	fmt.Println("ac match:", matchAutomata(abcAutomata, "ac"))
-	fmt.Println("ab match:", matchAutomata(abcAutomata, "ab"))
+	if kleeneAutomata, err := compile("a*bc"); err != nil {
+		fmt.Println(err)
+	} else {
+		printAutomata(kleeneAutomata)
+
+		fmt.Println("abc match:", matchAutomata(*kleeneAutomata, "abc"))
+		fmt.Println("aabc match:", matchAutomata(*kleeneAutomata, "aabc"))
+		fmt.Println("b match:", matchAutomata(*kleeneAutomata, "b"))
+		fmt.Println("c match:", matchAutomata(*kleeneAutomata, "c"))
+		fmt.Println("ac match:", matchAutomata(*kleeneAutomata, "ac"))
+		fmt.Println("ab match:", matchAutomata(*kleeneAutomata, "ab"))
+		fmt.Println("abcd match:", matchAutomata(*kleeneAutomata, "abcd"))
+	}
+
+	k, _ := compile("a*")
+	printAutomata(k)
 }
