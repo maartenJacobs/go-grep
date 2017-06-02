@@ -230,8 +230,9 @@ func (kleene kleene) convert() automata {
 		empty: []*state{subAutomata.initial, newAccepting},
 	}
 	transitions[subAutomata.accepting] = map[rune][]*state{
-		empty: []*state{newAccepting},
+		empty: []*state{newAccepting, subAutomata.initial},
 	}
+	transitions[newAccepting] = map[rune][]*state{}
 
 	return automata{
 		initial:     newInitial,
@@ -289,6 +290,10 @@ func printAutomata(automata *automata) {
 	fmt.Println("accepting:", stateToStandardNumMap[automata.accepting])
 	fmt.Println("transitions:")
 	for state, transitions := range automata.transitions {
+		fmt.Print(stateToStandardNumMap[state])
+		if len(transitions) == 0 {
+			fmt.Println()
+		}
 		for c, states := range transitions {
 			printableStates := make([]string, len(states))
 			stateCounter := 0
@@ -296,29 +301,15 @@ func printAutomata(automata *automata) {
 				printableStates[stateCounter] = fmt.Sprintf("%d", stateToStandardNumMap[nextState])
 				stateCounter++
 			}
-			fmt.Printf("%d on '%c' to %s\n", stateToStandardNumMap[state], c, strings.Join(printableStates, ", "))
+			fmt.Printf("\t'%c' -> %s\n", c, strings.Join(printableStates, ", "))
 		}
 	}
 }
 
 func main() {
-	if abcAutomata, err := compile("abc"); err != nil {
-		fmt.Println(err)
-	} else {
-		fmt.Println("abc match:", matchAutomata(*abcAutomata, "abc"))
-		fmt.Println("a match:", matchAutomata(*abcAutomata, "a"))
-		fmt.Println("b match:", matchAutomata(*abcAutomata, "b"))
-		fmt.Println("c match:", matchAutomata(*abcAutomata, "c"))
-		fmt.Println("ac match:", matchAutomata(*abcAutomata, "ac"))
-		fmt.Println("ab match:", matchAutomata(*abcAutomata, "ab"))
-		fmt.Println("abcd match:", matchAutomata(*abcAutomata, "abcd"))
-	}
-
 	if kleeneAutomata, err := compile("a*bc"); err != nil {
 		fmt.Println(err)
 	} else {
-		printAutomata(kleeneAutomata)
-
 		fmt.Println("abc match:", matchAutomata(*kleeneAutomata, "abc"))
 		fmt.Println("aabc match:", matchAutomata(*kleeneAutomata, "aabc"))
 		fmt.Println("b match:", matchAutomata(*kleeneAutomata, "b"))
@@ -327,7 +318,4 @@ func main() {
 		fmt.Println("ab match:", matchAutomata(*kleeneAutomata, "ab"))
 		fmt.Println("abcd match:", matchAutomata(*kleeneAutomata, "abcd"))
 	}
-
-	k, _ := compile("a*")
-	printAutomata(k)
 }
