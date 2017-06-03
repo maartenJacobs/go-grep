@@ -242,79 +242,117 @@ func (kleene kleene) convert() automata {
 		transitions: transitions}
 }
 
-func concatStack(exprs []expr, stackStarts []uint) (concat, []expr, []uint) {
-	fmt.Println(stackStarts)
-	stackStart, stackStarts := stackStarts[len(stackStarts)-1], stackStarts[:len(stackStarts)-1]
-	concatExprs := make([]expr, len(exprs[stackStart:]))
-	copy(concatExprs, exprs[stackStart:])
-	return concat{exprs: concatExprs}, exprs[:stackStart], stackStarts
+// The `exprStack` is an order collection of expressions that are converted to a single expression.
+type exprStack struct {
+	exprs       []expr
+	unionOption expr
+}
+
+func newExprStack() exprStack {
+	return exprStack{exprs: make([]expr, 0)}
+}
+
+func (stack *exprStack) push(ex expr) {
+	stack.exprs = append(stack.exprs, ex)
+	fmt.Println("exprs after push", stack.exprs)
+}
+
+func (stack *exprStack) pop() expr {
+	var p expr
+	p, stack.exprs = stack.exprs[len(stack.exprs)-1], stack.exprs[:len(stack.exprs)-1]
+	return p
+}
+
+// func (stack exprStack) closeUnion() {
+// 	if stack.unionOption == nil {
+// 		return
+// 	}
+
+// 	var (
+// 		secondOption expr
+// 		unionExpr    union
+// 	)
+// 	secondOption = stack.close()
+// 	unionExpr = union{expr1: unionOption, expr2: secondOption}
+// 	return append(exprs, unionExpr), stackStarts
+// }
+
+func (stack exprStack) close() concat {
+	return concat{exprs: stack.exprs}
 }
 
 func compile(reg string) (*automata, error) {
-	var exprs []expr
-	var unionOption expr
-	stackStarts := []uint{0}
+	// Initialise the stack of expression stacks with the first stack to represent the top level expression.
+	exprStacks := []exprStack{newExprStack()}
 	expectedClosing := 0
+	var next expr
+	var currStack *exprStack
 	for _, c := range reg {
-		var next expr
+		currStack = &exprStacks[len(exprStacks)-1]
+
 		switch c {
 		case '*':
-			if len(exprs) == 0 {
+			if len(currStack.exprs) == 0 {
 				return nil, errors.New("Invalid regular expression: expected expression before '*'")
 			}
-			next, exprs = exprs[len(exprs)-1], exprs[:len(exprs)-1]
-			next = kleene{expr: next}
+			next = kleene{expr: currStack.pop()}
 		case '(':
 			expectedClosing++
-			if len(exprs) > 0 {
-				stackStarts = append(stackStarts, uint(len(exprs)))
-			}
+			exprStacks = append(exprStacks, newExprStack())
 		case ')':
 			if expectedClosing == 0 {
 				return nil, errors.New("Unexpected closing parenthesis")
 			}
 			expectedClosing--
 
-			// Turn the current stack into a concat expression.
-			next, exprs, stackStarts = concatStack(exprs, stackStarts)
-		// The union operator '|' operates, as the name suggests, as the union of 2 options.
-		// When found in a regular expression, it starts a new union expression with the current
-		// stack of expressions as its first option.
-		case '|':
-			// Turn the current stack into the first union expression.
-			unionOption, exprs, stackStarts = concatStack(exprs, stackStarts)
+			// Close the current stack and append it to the previous stack.
+			exprStacks = exprStacks[:len(exprStacks)-1]
+			close := currStack.close()
+			exprStacks[len(exprStacks)-1].push(close)
 
-			// Start a new stack.
-			stackStarts = append(stackStarts, uint(len(exprs)))
+		// // The union operator '|' operates, as the name suggests, as the union of 2 options.
+		// // When found in a regular expression, it starts a new union expression with the current
+		// // stack of expressions as its first option.
+		// case '|':
+		// 	// The union operator starts a new stack, so we need to complete the previous union.
+		// 	if unionOption != nil {
+		// 		exprs, stackStarts = closeUnion(unionOption, exprs, stackStarts)
+		// 	}
+
+		// 	// Turn the current stack into the first union expression.
+		// 	unionOption, exprs, stackStarts = concatStack(exprs, stackStarts)
+
+		// 	// Start a new stack.
+		// 	stackStarts = append(stackStarts, uint(len(exprs)))
 		default:
 			next = match{c: c}
 		}
 
+		fmt.Println("next", next)
 		if next != nil {
-			fmt.Println("append", exprs, next)
-			exprs = append(exprs, next)
+			fmt.Println("curr stack before push", currStack)
+			currStack.push(next)
 			next = nil
-			fmt.Println("done append")
 		}
-		fmt.Println("current exprs:", exprs)
+
+		fmt.Println("curr stack", currStack)
+		fmt.Println("expr stacks", exprStacks)
 	}
 
 	if expectedClosing != 0 {
 		return nil, errors.New("Expected closing parenthesis")
 	}
 
-	if unionOption != nil {
-		var secondOption expr
-		secondOption, exprs, stackStarts = concatStack(exprs, stackStarts)
-		next := union{expr1: unionOption, expr2: secondOption}
-		exprs = append(exprs, next)
-	}
+	// if unionOption != nil {
+	// 	exprs, stackStarts = closeUnion(unionOption, exprs, stackStarts)
+	// 	unionOption = nil
+	// }
 
-	if len(stackStarts) != 0 {
+	if len(exprStacks) > 1 {
 		// TODO: indicates a bug?
 	}
 
-	automata := concat{exprs: exprs}.convert()
+	automata := exprStacks[0].close().convert()
 	return &automata, nil
 }
 
