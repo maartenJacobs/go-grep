@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"unsafe"
@@ -247,6 +249,9 @@ func (kleene kleene) convert() automata {
 
 func compile(reg string) (*automata, error) {
 	var exprs []expr
+	var stackStart uint
+	stackStarts := []uint{0}
+	expectedClosing := 0
 	for _, c := range reg {
 		var next expr
 		switch c {
@@ -256,12 +261,41 @@ func compile(reg string) (*automata, error) {
 			}
 			next, exprs = exprs[len(exprs)-1], exprs[:len(exprs)-1]
 			next = kleene{expr: next}
+		case '(':
+			expectedClosing++
+			if len(exprs) > 0 {
+				stackStarts = append(stackStarts, uint(len(exprs)))
+			}
+		case ')':
+			if expectedClosing == 0 {
+				return nil, errors.New("Unexpected closing parenthesis")
+			}
+			expectedClosing--
+
+			// Pop off the last stack position, and use it to retrieve the concat expression.
+			stackStart, stackStarts = stackStarts[len(stackStarts)-1], stackStarts[:len(stackStarts)-1]
+			concatExprs := make([]expr, len(exprs[stackStart:]))
+			copy(concatExprs, exprs[stackStart:])
+			next = concat{exprs: concatExprs}
+			exprs = exprs[:stackStart]
 		default:
 			next = match{c: c}
 		}
-		exprs = append(exprs, next)
+
+		if next != nil {
+			fmt.Println("append", exprs, next)
+			exprs = append(exprs, next)
+			next = nil
+			fmt.Println("done append")
+		}
+		fmt.Println("current exprs:", exprs)
 	}
-	automata := (concat{exprs: exprs}).convert()
+
+	if expectedClosing != 0 {
+		return nil, errors.New("Expected closing parenthesis")
+	}
+
+	automata := concat{exprs: exprs}.convert()
 	return &automata, nil
 }
 
@@ -307,15 +341,23 @@ func printAutomata(automata *automata) {
 }
 
 func main() {
-	if kleeneAutomata, err := compile("a*bc"); err != nil {
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: go-grep expr")
+		os.Exit(2)
+	}
+
+	stdin := bufio.NewReader(os.Stdin)
+	line, err := stdin.ReadString('\n')
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(2)
+	}
+
+	automata, err := compile(os.Args[1])
+	if err != nil {
 		fmt.Println(err)
 	} else {
-		fmt.Println("abc match:", matchAutomata(*kleeneAutomata, "abc"))
-		fmt.Println("aabc match:", matchAutomata(*kleeneAutomata, "aabc"))
-		fmt.Println("b match:", matchAutomata(*kleeneAutomata, "b"))
-		fmt.Println("c match:", matchAutomata(*kleeneAutomata, "c"))
-		fmt.Println("ac match:", matchAutomata(*kleeneAutomata, "ac"))
-		fmt.Println("ab match:", matchAutomata(*kleeneAutomata, "ab"))
-		fmt.Println("abcd match:", matchAutomata(*kleeneAutomata, "abcd"))
+		printAutomata(automata)
+		fmt.Println(matchAutomata(*automata, strings.TrimRight(line, "\n")))
 	}
 }
