@@ -184,16 +184,16 @@ func concatAutomata(a, b automata) automata {
 
 // Match on possibility of 2 expressions
 type union struct {
-	expr1 *expr // Must not be nil
-	expr2 *expr // May be nil, but must be filled in later
+	expr1 expr
+	expr2 expr
 }
 
 func (union union) convert() automata {
 	newInitial := newState()
 	newAccepting := newState()
 
-	expr1Automata := (*union.expr1).convert()
-	expr2automata := (*union.expr2).convert()
+	expr1Automata := union.expr1.convert()
+	expr2automata := union.expr2.convert()
 	transitions := mergeTransitions(expr1Automata.transitions, expr2automata.transitions)
 	transitions[newInitial] = map[rune][]*state{
 		empty: []*state{expr1Automata.initial, expr2automata.initial},
@@ -242,14 +242,17 @@ func (kleene kleene) convert() automata {
 		transitions: transitions}
 }
 
-// ( ( ) )
-// ()*
-// a*
-// (a|b)
+func concatStack(exprs []expr, stackStarts []uint) (concat, []expr, []uint) {
+	fmt.Println(stackStarts)
+	stackStart, stackStarts := stackStarts[len(stackStarts)-1], stackStarts[:len(stackStarts)-1]
+	concatExprs := make([]expr, len(exprs[stackStart:]))
+	copy(concatExprs, exprs[stackStart:])
+	return concat{exprs: concatExprs}, exprs[:stackStart], stackStarts
+}
 
 func compile(reg string) (*automata, error) {
 	var exprs []expr
-	var stackStart uint
+	var unionOption expr
 	stackStarts := []uint{0}
 	expectedClosing := 0
 	for _, c := range reg {
@@ -272,12 +275,17 @@ func compile(reg string) (*automata, error) {
 			}
 			expectedClosing--
 
-			// Pop off the last stack position, and use it to retrieve the concat expression.
-			stackStart, stackStarts = stackStarts[len(stackStarts)-1], stackStarts[:len(stackStarts)-1]
-			concatExprs := make([]expr, len(exprs[stackStart:]))
-			copy(concatExprs, exprs[stackStart:])
-			next = concat{exprs: concatExprs}
-			exprs = exprs[:stackStart]
+			// Turn the current stack into a concat expression.
+			next, exprs, stackStarts = concatStack(exprs, stackStarts)
+		// The union operator '|' operates, as the name suggests, as the union of 2 options.
+		// When found in a regular expression, it starts a new union expression with the current
+		// stack of expressions as its first option.
+		case '|':
+			// Turn the current stack into the first union expression.
+			unionOption, exprs, stackStarts = concatStack(exprs, stackStarts)
+
+			// Start a new stack.
+			stackStarts = append(stackStarts, uint(len(exprs)))
 		default:
 			next = match{c: c}
 		}
@@ -293,6 +301,17 @@ func compile(reg string) (*automata, error) {
 
 	if expectedClosing != 0 {
 		return nil, errors.New("Expected closing parenthesis")
+	}
+
+	if unionOption != nil {
+		var secondOption expr
+		secondOption, exprs, stackStarts = concatStack(exprs, stackStarts)
+		next := union{expr1: unionOption, expr2: secondOption}
+		exprs = append(exprs, next)
+	}
+
+	if len(stackStarts) != 0 {
+		// TODO: indicates a bug?
 	}
 
 	automata := concat{exprs: exprs}.convert()
