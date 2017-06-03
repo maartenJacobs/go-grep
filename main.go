@@ -193,15 +193,15 @@ func (union union) convert() automata {
 	newAccepting := newState()
 
 	expr1Automata := union.expr1.convert()
-	expr2automata := union.expr2.convert()
-	transitions := mergeTransitions(expr1Automata.transitions, expr2automata.transitions)
+	expr2Automata := union.expr2.convert()
+	transitions := mergeTransitions(expr1Automata.transitions, expr2Automata.transitions)
 	transitions[newInitial] = map[rune][]*state{
-		empty: []*state{expr1Automata.initial, expr2automata.initial},
+		empty: []*state{expr1Automata.initial, expr2Automata.initial},
 	}
 	transitions[expr1Automata.accepting] = map[rune][]*state{
 		empty: []*state{newAccepting},
 	}
-	transitions[expr2automata.accepting] = map[rune][]*state{
+	transitions[expr2Automata.accepting] = map[rune][]*state{
 		empty: []*state{newAccepting},
 	}
 
@@ -254,7 +254,6 @@ func newExprStack() exprStack {
 
 func (stack *exprStack) push(ex expr) {
 	stack.exprs = append(stack.exprs, ex)
-	fmt.Println("exprs after push", stack.exprs)
 }
 
 func (stack *exprStack) pop() expr {
@@ -262,20 +261,6 @@ func (stack *exprStack) pop() expr {
 	p, stack.exprs = stack.exprs[len(stack.exprs)-1], stack.exprs[:len(stack.exprs)-1]
 	return p
 }
-
-// func (stack exprStack) closeUnion() {
-// 	if stack.unionOption == nil {
-// 		return
-// 	}
-
-// 	var (
-// 		secondOption expr
-// 		unionExpr    union
-// 	)
-// 	secondOption = stack.close()
-// 	unionExpr = union{expr1: unionOption, expr2: secondOption}
-// 	return append(exprs, unionExpr), stackStarts
-// }
 
 func (stack exprStack) close() concat {
 	return concat{exprs: stack.exprs}
@@ -288,6 +273,7 @@ func compile(reg string) (*automata, error) {
 	var next expr
 	var currStack *exprStack
 	for _, c := range reg {
+		fmt.Println("Processing", string(c))
 		currStack = &exprStacks[len(exprStacks)-1]
 
 		switch c {
@@ -310,20 +296,21 @@ func compile(reg string) (*automata, error) {
 			close := currStack.close()
 			exprStacks[len(exprStacks)-1].push(close)
 
-		// // The union operator '|' operates, as the name suggests, as the union of 2 options.
-		// // When found in a regular expression, it starts a new union expression with the current
-		// // stack of expressions as its first option.
-		// case '|':
-		// 	// The union operator starts a new stack, so we need to complete the previous union.
-		// 	if unionOption != nil {
-		// 		exprs, stackStarts = closeUnion(unionOption, exprs, stackStarts)
-		// 	}
+		// The union operator '|' operates, as the name suggests, as the union of 2 options.
+		// When found in a regular expression, it starts a new union expression with the current
+		// stack of expressions as its first option.
+		case '|':
+			// The union operator starts a new stack, so we need to complete the previous union.
+			// if unionOption != nil {
+			// 	exprs, stackStarts = closeUnion(unionOption, exprs, stackStarts)
+			// }
 
-		// 	// Turn the current stack into the first union expression.
-		// 	unionOption, exprs, stackStarts = concatStack(exprs, stackStarts)
+			// Turn the current stack into the first union expression.
+			currStack.unionOption = currStack.close()
+			currStack.exprs = []expr{}
 
-		// 	// Start a new stack.
-		// 	stackStarts = append(stackStarts, uint(len(exprs)))
+			// Start a new stack.
+			exprStacks = append(exprStacks, newExprStack())
 		default:
 			next = match{c: c}
 		}
@@ -343,13 +330,15 @@ func compile(reg string) (*automata, error) {
 		return nil, errors.New("Expected closing parenthesis")
 	}
 
-	// if unionOption != nil {
-	// 	exprs, stackStarts = closeUnion(unionOption, exprs, stackStarts)
-	// 	unionOption = nil
-	// }
+	if len(exprStacks) == 2 && exprStacks[0].unionOption != nil {
+		lastUnion := union{expr1: exprStacks[0].unionOption, expr2: exprStacks[1].close()}
+		exprStacks = exprStacks[:1]
+		exprStacks[0].push(lastUnion)
+	}
 
 	if len(exprStacks) > 1 {
 		// TODO: indicates a bug?
+		fmt.Println("count of expr stacks unexpected:", exprStacks)
 	}
 
 	automata := exprStacks[0].close().convert()
@@ -358,10 +347,16 @@ func compile(reg string) (*automata, error) {
 
 func printAutomata(automata *automata) {
 	numToStateMap := make(map[int]*state)
-	stateToNumMap := make(map[*state]int)
-	for state := range automata.transitions {
-		stateToNumMap[state] = int(uintptr(unsafe.Pointer(state)))
-		numToStateMap[stateToNumMap[state]] = state
+	for state, transitions := range automata.transitions {
+		numToStateMap[int(uintptr(unsafe.Pointer(state)))] = state
+		for _, nextStates := range transitions {
+			for _, nextState := range nextStates {
+				nextStateNum := int(uintptr(unsafe.Pointer(nextState)))
+				if _, nextStateSet := numToStateMap[nextStateNum]; !nextStateSet {
+					numToStateMap[nextStateNum] = nextState
+				}
+			}
+		}
 	}
 
 	sortedNums := make([]int, len(numToStateMap))
